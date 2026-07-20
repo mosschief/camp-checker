@@ -1,0 +1,56 @@
+# campwatch configuration — copy to config.yaml and edit.
+# No secrets in this file: secrets live in .env and are referenced here by
+# env-var name (*_env keys) or session name.
+
+provider:
+  name: GoingToCamp
+  host: washington.goingtocamp.com   # swap host + rec_area_id to retarget any GoingToCamp jurisdiction
+  rec_area_id: 3                     # Washington State Parks
+
+defaults:                 # per-watch fields fall back to these
+  nights: 1
+  polling_interval: 5     # minutes; hard floor 5 (camply's minimum)
+  auto_hold: false        # opt-in per target
+  dry_run: true           # global safety default; flip deliberately after dry-run verification
+  notify: home_assistant  # name of a sink defined below
+
+notifications:            # named sinks; watches reference them by name
+  home_assistant:
+    type: webhook
+    url_env: HA_WEBHOOK_URL          # value pulled from .env by this key
+  phone_pushover:
+    type: pushover
+    token_env: PUSHOVER_PUSH_TOKEN
+    user_env: PUSHOVER_PUSH_USER
+  ntfy_homelab:
+    type: ntfy
+    topic_env: NTFY_TOPIC
+    # server_env: NTFY_SERVER        # optional; defaults to https://ntfy.sh
+
+# receiver:               # optional; these are the defaults
+#   port: 8000
+#   webhook_url: http://receiver:8000/camply   # where camply POSTs (compose network)
+#   hold_window_minutes: 15
+#   dedupe_ttl_minutes: 30
+
+watches:
+  # Look up campground_id with:
+  #   camply campgrounds --provider GoingToCamp --rec-area 3 --search "Kanaskat"
+  - name: kanaskat-palmer-aug
+    campground_id: 0            # <KANASKAT_ID> from the camply lookup above
+    map_id: 0                   # <MAP_ID> from your DevTools capture or the map response
+    resource_location_id: 0     # <RESOURCE_LOCATION_ID> (usually == campground_id)
+    start_date: 2026-08-14
+    end_date: 2026-08-16        # 1-night stays across the window = Fri AND Sat night
+    nights: 1
+    auto_hold: true
+    hold_template: holds/kanaskat.json   # your captured hold request (see README §4)
+    session: wa_primary                  # → SESSION_WA_PRIMARY_COOKIE / _CSRF in .env
+    notify: home_assistant
+
+  - name: deception-pass-backup
+    campground_id: 0            # <DECEPTION_ID>
+    start_date: 2026-08-14
+    end_date: 2026-08-16
+    auto_hold: false            # watch-and-notify only; no capture needed
+    notify: phone_pushover

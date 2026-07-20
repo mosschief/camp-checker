@@ -1,0 +1,19 @@
+{
+  "_comment": "EXAMPLE ONLY — the real URL, headers, and body come from YOUR DevTools capture (README: 'Capturing a hold request'). Never guess the hold endpoint. Placeholders are replaced at fire time; a value that is exactly one placeholder keeps the captured type.",
+  "url": "https://washington.goingtocamp.com/<PATH-FROM-YOUR-CAPTURE>",
+  "method": "POST",
+  "headers": {
+    "Content-Type": "application/json",
+    "Cookie": "{{SESSION_COOKIE}}",
+    "RequestVerificationToken": "{{CSRF_TOKEN}}",
+    "Referer": "https://washington.goingtocamp.com/"
+  },
+  "json": {
+    "resourceId": "{{CAMPSITE_ID}}",
+    "mapId": "{{MAP_ID}}",
+    "resourceLocationId": "{{RESOURCE_LOCATION_ID}}",
+    "startDate": "{{START_DATE}}",
+    "endDate": "{{END_DATE}}",
+    "nights": "{{NIGHTS}}"
+  }
+}

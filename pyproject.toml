@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "campwatch"
+version = "0.1.0"
+description = "Config-driven GoingToCamp cancellation watcher with optional auto-hold"
+requires-python = ">=3.11"
+dependencies = [
+    # camply pins pydantic v1; fastapi supports both majors, so the whole
+    # stack standardizes on v1 and both services can share one image.
+    "pydantic>=1.10,<2",
+    "PyYAML>=6.0",
+    "python-dotenv>=1.0",
+    "httpx>=0.27",
+    "fastapi>=0.100,<0.116",
+    "uvicorn>=0.23",
+    "camply==0.34.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+campwatch-watcher = "campwatch.watcher:main"
+campwatch-receiver = "campwatch.receiver:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

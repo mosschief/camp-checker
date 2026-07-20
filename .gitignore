@@ -1,0 +1,17 @@
+# Secrets & real (per-deployment) config — only the *.example files are committed
+.env
+config.yaml
+holds/*.json
+!holds/example.hold.json
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+.pytest_cache/
+build/
+dist/
+
+# Generated at runtime
+runtime/
