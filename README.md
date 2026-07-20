@@ -36,6 +36,12 @@ routing is hardcoded — it all lives in `config.yaml`.
 
 ## Quick start
 
+Two ways to run it — same image, same config either way:
+
+- **Unraid app** (single container, managed from the Docker tab): see
+  [Installing on Unraid](#installing-on-unraid).
+- **docker compose** (receiver + watcher as separate services):
+
 ```bash
 cp config.example.yaml config.yaml   # edit: your parks, dates, sinks
 cp .env.example .env                 # edit: your secrets
@@ -184,6 +190,52 @@ opening (idempotency-keyed on watch + site + date, duplicates dropped), no
 retry loops against the hold endpoint, 5-minute polling floor, and payment is
 always manual. If a hold fails (taken already, stale session, network), you
 still get an immediate "book manually NOW" notification with the direct link.
+
+## Installing on Unraid
+
+The repo ships an Unraid Docker template (`unraid/campwatch.xml`) that runs
+both services in **one container** (`campwatch-combined`: the receiver plus
+the camply watchers, with the webhook wired to localhost automatically).
+Images are published to GHCR by CI on every push to `main`.
+
+One-time prerequisite: after the first CI run, make the GHCR package public
+(GitHub → your profile → Packages → `camp-checker` → Package settings →
+Change visibility), or add registry credentials on Unraid.
+
+1. **Prepare appdata** — on the Unraid box:
+
+   ```bash
+   mkdir -p /mnt/user/appdata/campwatch/holds
+   # put your edited config.yaml in /mnt/user/appdata/campwatch/
+   # put captured hold templates (auto_hold watches only) in holds/
+   ```
+
+2. **Add the template repository** — Unraid web UI → *Docker* tab → scroll to
+   the bottom → **Template Repositories** → add:
+
+   ```
+   https://github.com/mosschief/camp-checker
+   ```
+
+   Save, then click **Add Container** and pick **campwatch** from the
+   template dropdown (under "User templates").
+
+3. **Fill in the template** — the appdata path and port are prefilled. Enter
+   only the secrets your config.yaml actually references (HA webhook URL,
+   Pushover token/user, ntfy topic, `SESSION_WA_PRIMARY_COOKIE`/`_CSRF`).
+   Secret fields are masked. For additional sessions, click **Add another
+   Path, Port, Variable…** and create `SESSION_<NAME>_COOKIE`/`_CSRF`
+   variables matching the `session:` names in your config.
+
+4. **Start it.** The **WebUI** button opens `/status` (active watches, arm
+   state, recent events). If the container exits immediately, the log shows
+   the exact config problems — fix and restart. If either internal service
+   dies, the container exits and Unraid's restart policy brings the pair
+   back together.
+
+`.env` is not used on Unraid — the same variables come from the template's
+container variables instead. Session refresh = edit the two session
+variables on the container and hit Apply (which recreates and restarts it).
 
 ## Operations
 

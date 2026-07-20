@@ -25,6 +25,7 @@ dev = ["pytest>=8.0"]
 [project.scripts]
 campwatch-watcher = "campwatch.watcher:main"
 campwatch-receiver = "campwatch.receiver:main"
+campwatch-combined = "campwatch.combined:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

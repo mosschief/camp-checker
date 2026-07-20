@@ -1,0 +1,47 @@
+<?xml version="1.0"?>
+<Container version="2">
+  <Name>campwatch</Name>
+  <Repository>ghcr.io/mosschief/camp-checker:latest</Repository>
+  <Registry>https://ghcr.io/mosschief/camp-checker</Registry>
+  <Network>bridge</Network>
+  <Shell>bash</Shell>
+  <Privileged>false</Privileged>
+  <Support>https://github.com/mosschief/camp-checker/issues</Support>
+  <Project>https://github.com/mosschief/camp-checker</Project>
+  <Overview>
+Config-driven GoingToCamp cancellation watcher + auto-hold. Watches campgrounds
+(default: Washington State Parks) for cancellations matching your dates, can
+fire ONE hold request to lock an opening to your account for the ~15-minute
+hold window, and notifies you (Home Assistant webhook / Pushover / ntfy) with a
+direct booking link. Never automates payment - you complete checkout by hand.
+
+SETUP BEFORE FIRST START: put config.yaml (copy config.example.yaml from the
+project repo) and, for auto-hold watches, a holds/ folder with your captured
+hold templates into the appdata path below. Full walkthrough in the README:
+https://github.com/mosschief/camp-checker#readme
+
+The container fails fast with a clear error list if the config is invalid -
+check the container log if it won't stay started. dry_run defaults to true;
+no hold is ever sent until you deliberately flip it.
+  </Overview>
+  <Category>Tools: Productivity:</Category>
+  <WebUI>http://[IP]:[PORT:8000]/status</WebUI>
+  <TemplateURL>https://raw.githubusercontent.com/mosschief/camp-checker/main/unraid/campwatch.xml</TemplateURL>
+  <Icon>https://raw.githubusercontent.com/mosschief/camp-checker/main/unraid/campwatch-icon.png</Icon>
+  <ExtraParams/>
+  <PostArgs/>
+  <DonateText/>
+  <DonateLink/>
+  <Requires>config.yaml (and holds/ for auto-hold watches) in the appdata folder - see the project README.</Requires>
+  <Config Name="Appdata (config.yaml + holds/)" Target="/app/data" Default="/mnt/user/appdata/campwatch" Mode="rw" Description="Folder containing config.yaml and the holds/ directory with captured hold templates." Type="Path" Display="always" Required="true" Mask="false">/mnt/user/appdata/campwatch</Config>
+  <Config Name="Status/API Port" Target="8000" Default="8000" Mode="tcp" Description="Receiver port: /status dashboard, /healthz, and the camply webhook." Type="Port" Display="always" Required="true" Mask="false">8000</Config>
+  <Config Name="TZ" Target="TZ" Default="America/Los_Angeles" Mode="" Description="Container timezone." Type="Variable" Display="always" Required="false" Mask="false">America/Los_Angeles</Config>
+  <Config Name="Config path (advanced)" Target="CAMPWATCH_CONFIG" Default="/app/data/config.yaml" Mode="" Description="Path to config.yaml inside the container. Leave as-is unless you moved it." Type="Variable" Display="advanced" Required="true" Mask="false">/app/data/config.yaml</Config>
+  <Config Name="HA_WEBHOOK_URL" Target="HA_WEBHOOK_URL" Default="" Mode="" Description="Home Assistant webhook URL (only if a sink in config.yaml references it)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="PUSHOVER_PUSH_TOKEN" Target="PUSHOVER_PUSH_TOKEN" Default="" Mode="" Description="Pushover app token (only if a sink references it)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="PUSHOVER_PUSH_USER" Target="PUSHOVER_PUSH_USER" Default="" Mode="" Description="Pushover user key (only if a sink references it)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="NTFY_TOPIC" Target="NTFY_TOPIC" Default="" Mode="" Description="ntfy topic (only if a sink references it)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="NTFY_SERVER" Target="NTFY_SERVER" Default="" Mode="" Description="Optional self-hosted ntfy server URL; defaults to https://ntfy.sh." Type="Variable" Display="advanced" Required="false" Mask="false"></Config>
+  <Config Name="SESSION_WA_PRIMARY_COOKIE" Target="SESSION_WA_PRIMARY_COOKIE" Default="" Mode="" Description="Session cookie for the 'wa_primary' session (auto-hold watches only). Add more SESSION_&lt;NAME&gt;_COOKIE/_CSRF variables for additional sessions named in config.yaml." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+  <Config Name="SESSION_WA_PRIMARY_CSRF" Target="SESSION_WA_PRIMARY_CSRF" Default="" Mode="" Description="Anti-CSRF / request-verification token for the 'wa_primary' session (auto-hold watches only)." Type="Variable" Display="always" Required="false" Mask="true"></Config>
+</Container>

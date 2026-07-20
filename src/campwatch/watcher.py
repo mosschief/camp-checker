@@ -36,7 +36,11 @@ class CamplySupervisor:
 
     def _camply_env(self) -> Dict[str, str]:
         env = dict(os.environ)
-        env["WEBHOOK_URL"] = self.config.receiver.webhook_url
+        # CAMPWATCH_WEBHOOK_URL overrides config (set by the combined
+        # single-container entrypoint, where the receiver is on localhost)
+        env["WEBHOOK_URL"] = (
+            os.environ.get("CAMPWATCH_WEBHOOK_URL") or self.config.receiver.webhook_url
+        )
         env.setdefault("WEBHOOK_HEADERS", '{"Content-Type": "application/json"}')
         return env
 
