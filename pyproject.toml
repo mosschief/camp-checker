@@ -32,3 +32,6 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# put the repo root on sys.path so `from tests.conftest import ...` resolves
+# whether pytest is run as `pytest` (console script) or `python -m pytest`
+pythonpath = ["."]
