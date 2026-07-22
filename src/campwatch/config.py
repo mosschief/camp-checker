@@ -316,13 +316,20 @@ def load_config(
     if not isinstance(data, dict):
         raise ConfigError("config file must be a YAML mapping")
 
+    return build_config(data, config_path.parent, environ)
+
+
+def build_config(
+    data: Dict, config_dir: Path, environ: Dict[str, str]
+) -> AppConfig:
+    """Validate a raw config mapping (already parsed) into an AppConfig."""
     try:
         raw = RawConfig(**data)
     except Exception as exc:  # pydantic ValidationError → readable message
         raise ConfigError(f"invalid config:\n{exc}") from exc
 
     watches = [_resolve_watch(w, raw.defaults) for w in raw.watches]
-    problems = _cross_validate(raw, watches, config_path.parent, environ)
+    problems = _cross_validate(raw, watches, Path(config_dir), environ)
     if problems:
         raise ConfigError(
             "invalid config:\n" + "\n".join(f"  - {p}" for p in problems)
@@ -335,3 +342,20 @@ def load_config(
         watches=watches,
         receiver=raw.receiver,
     )
+
+
+def read_raw(config_path: str | Path) -> Dict:
+    """Parse config.yaml into a plain dict (no validation)."""
+    config_path = Path(config_path)
+    data = yaml.safe_load(config_path.read_text()) if config_path.is_file() else {}
+    if not isinstance(data, dict):
+        raise ConfigError("config file must be a YAML mapping")
+    return data
+
+
+def write_raw(config_path: str | Path, data: Dict) -> None:
+    """Atomically write a raw config mapping back to config.yaml."""
+    config_path = Path(config_path)
+    tmp = config_path.with_suffix(config_path.suffix + ".tmp")
+    tmp.write_text(yaml.safe_dump(data, sort_keys=False, default_flow_style=False))
+    os.replace(tmp, config_path)

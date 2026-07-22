@@ -19,6 +19,7 @@ For GoingToCamp, facility_id is the resource_location_id.
 
 from __future__ import annotations
 
+import contextlib
 import datetime
 import logging
 import os
@@ -28,9 +29,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Request
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel, validator
 
-from campwatch.config import AppConfig, ConfigError, ResolvedWatch, load_config
+from campwatch.catalog import CampgroundCatalog, CatalogError
+from campwatch.config import AppConfig, ConfigError, ResolvedWatch, build_config, load_config, read_raw
+from campwatch import store
+from campwatch.dashboard import DASHBOARD_HTML
 from campwatch.holds import (
     HoldOutcome,
     HoldTemplate,
@@ -123,12 +128,27 @@ class ReceiverService:
     ):
         self.config = config
         self.config_dir = config_dir
+        self._config_notifier_override = notifier is not None
         self.notifier = notifier or Notifier(config.notifications)
         self.sessions = sessions or EnvSessionProvider()
         self.dedupe = IdempotencyStore(config.receiver.dedupe_ttl_minutes)
         self.recent: List[EventResult] = []
         self.started_at = datetime.datetime.now(datetime.timezone.utc)
         self.last_webhook_at: Optional[datetime.datetime] = None
+        self.config_path = Path(config_dir) / Path(
+            os.environ.get("CAMPWATCH_CONFIG", "config.yaml")
+        ).name
+        self.catalog = CampgroundCatalog()
+        self._lock = threading.Lock()
+
+    # -- config application ------------------------------------------------
+
+    def apply_config(self, config: AppConfig) -> None:
+        """Swap in a new config (from a dashboard edit or a file hot-reload)."""
+        with self._lock:
+            self.config = config
+            if not self._config_notifier_override:
+                self.notifier = Notifier(config.notifications)
 
     # -- event handling ----------------------------------------------------
 
@@ -260,6 +280,56 @@ class ReceiverService:
         except (NotifyError, Exception) as exc:  # a broken sink must not kill the event loop
             logger.error("notification via %r failed: %s", sink_name, exc)
 
+    # -- config reload (hot-reload from file) ------------------------------
+
+    def reload_from_file(self) -> bool:
+        """Re-read config.yaml and apply it. Returns True if applied."""
+        try:
+            raw = read_raw(self.config_path)
+            config = build_config(raw, self.config_path.parent, dict(os.environ))
+        except ConfigError as exc:
+            logger.error("config reload rejected, keeping current config: %s", exc)
+            return False
+        self.apply_config(config)
+        return True
+
+    # -- dashboard data ----------------------------------------------------
+
+    def watches_detail(self) -> List[dict]:
+        return [
+            {
+                "name": w.name,
+                "campground_id": w.campground_id,
+                "resource_location_id": w.resource_location_id,
+                "map_id": w.map_id,
+                "start_date": w.start_date.isoformat(),
+                "end_date": w.end_date.isoformat(),
+                "nights": w.nights,
+                "polling_interval": w.polling_interval,
+                "auto_hold": w.auto_hold,
+                "dry_run": w.dry_run,
+                "notify": w.notify,
+            }
+            for w in self.config.watches
+        ]
+
+    def meta(self) -> dict:
+        return {
+            "provider": {
+                "name": self.config.provider.name,
+                "host": self.config.provider.host,
+                "rec_area_id": self.config.provider.rec_area_id,
+            },
+            "sinks": sorted(self.config.notifications.keys()),
+            "defaults": {
+                "nights": self.config.defaults.nights,
+                "polling_interval": self.config.defaults.polling_interval,
+                "auto_hold": self.config.defaults.auto_hold,
+                "dry_run": self.config.defaults.dry_run,
+                "notify": self.config.defaults.notify,
+            },
+        }
+
     # -- status ------------------------------------------------------------
 
     def status(self) -> dict:
@@ -288,7 +358,27 @@ def create_app(service: Optional[ReceiverService] = None) -> FastAPI:
         config = load_config(config_path)
         service = ReceiverService(config, config_path.parent)
 
-    app = FastAPI(title="campwatch receiver")
+    @contextlib.asynccontextmanager
+    async def lifespan(app: FastAPI):
+        stop = threading.Event()
+
+        def _poll():
+            last_mtime = _safe_mtime(service.config_path)
+            while not stop.wait(2.0):
+                mtime = _safe_mtime(service.config_path)
+                if mtime != last_mtime:
+                    last_mtime = mtime
+                    if service.reload_from_file():
+                        logger.info("config.yaml changed — reloaded")
+
+        thread = threading.Thread(target=_poll, name="config-hot-reload", daemon=True)
+        thread.start()
+        try:
+            yield
+        finally:
+            stop.set()
+
+    app = FastAPI(title="campwatch receiver", lifespan=lifespan)
     app.state.service = service
 
     @app.post("/camply")
@@ -305,7 +395,59 @@ def create_app(service: Optional[ReceiverService] = None) -> FastAPI:
     async def status():
         return service.status()
 
+    # -- dashboard ---------------------------------------------------------
+
+    @app.get("/", response_class=HTMLResponse)
+    async def dashboard():
+        return DASHBOARD_HTML
+
+    @app.get("/api/meta")
+    async def api_meta():
+        return service.meta()
+
+    @app.get("/api/watches")
+    async def api_watches():
+        return {"watches": service.watches_detail()}
+
+    @app.get("/api/search")
+    def api_search(q: str = ""):
+        # sync def → FastAPI runs it in a threadpool (camply call blocks on network)
+        rec_area_id = service.config.provider.rec_area_id
+        try:
+            options = service.catalog.search(rec_area_id, q)
+        except CatalogError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=502)
+        return {"results": [o.dict() for o in options]}
+
+    @app.post("/api/watches")
+    async def api_add_watch(request: Request):
+        body = await request.json()
+        try:
+            config = store.upsert_watch(service.config_path, body, dict(os.environ))
+        except ConfigError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        service.apply_config(config)
+        logger.info("watch upserted via dashboard: %s", body.get("name"))
+        return {"ok": True, "watches": service.watches_detail()}
+
+    @app.delete("/api/watches/{name}")
+    async def api_delete_watch(name: str):
+        try:
+            config = store.remove_watch(service.config_path, name, dict(os.environ))
+        except ConfigError as exc:
+            return JSONResponse({"error": str(exc)}, status_code=400)
+        service.apply_config(config)
+        logger.info("watch removed via dashboard: %s", name)
+        return {"ok": True, "watches": service.watches_detail()}
+
     return app
+
+
+def _safe_mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def main() -> int:

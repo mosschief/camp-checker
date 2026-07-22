@@ -27,6 +27,13 @@ layer, webhook receiver, hold service, and notification routing are this repo.
 Nothing about parks, dates, stay lengths, hold behavior, or notification
 routing is hardcoded — it all lives in `config.yaml`.
 
+**Managing watched sites is point-and-click.** The receiver serves a web
+dashboard (its root URL) with a live campground search: type a park name, pick
+it from the dropdown, set dates, and it's watched — no manual ID lookups, and
+changes apply immediately with **no container restart**. `config.yaml` stays
+the source of truth (the dashboard just writes to it), and editing the file by
+hand still works — the services hot-reload it within seconds either way.
+
 > **Terms-of-service caveat:** GoingToCamp's terms constrain automated
 > interaction with their booking system. This tool exists for single-family,
 > personal use — one hold attempt per detected opening, a 5-minute polling
@@ -121,11 +128,16 @@ material keyed by session name: `session: wa_primary` in config.yaml reads
 
 ### 1. Find your campground IDs
 
+**Easiest:** skip this entirely and add watches from the [dashboard](#the-dashboard) —
+its search fills in the IDs for you.
+
+If you'd rather populate `config.yaml` by hand, look the ID up with camply:
+
 ```bash
-pip install camply
 camply campgrounds --provider GoingToCamp --rec-area 3 --search "Kanaskat"
 ```
 
+(No local install needed — `docker run --rm ghcr.io/mosschief/camp-checker camply campgrounds --provider GoingToCamp --rec-area 3 --search "Kanaskat"` works too.)
 Put the reported facility ID in the watch's `campground_id` (for GoingToCamp
 this is the `resource_location_id`). `map_id` shows up in your hold capture
 (below) or in the site's map API traffic.
@@ -237,9 +249,33 @@ Change visibility), or add registry credentials on Unraid.
 container variables instead. Session refresh = edit the two session
 variables on the container and hit Apply (which recreates and restarts it).
 
+## The dashboard
+
+The receiver serves a web UI at its root URL (`http://<host>:8000/`). From it you can:
+
+- **Search for a campground** by name — the box autocompletes against the
+  provider's catalog for your configured `rec_area_id`, and selecting a result
+  fills in the campground/resource/map IDs for you. No `camply campgrounds`
+  lookup, no numeric IDs by hand.
+- **Add a watch** — pick dates, nights, and a notification sink; optionally tick
+  auto-hold (it's rejected with a clear message if the hold template/session
+  aren't in place). Applied live.
+- **Remove a watch** — one click; the running camply search for it is stopped.
+
+Every change is validated through the same rules as startup before it's saved,
+written atomically to `config.yaml`, and applied without a restart. Because the
+file is the source of truth, hand-edits (or a `git`-managed `config.yaml`) are
+picked up by the same hot-reload — the watcher reconciles its camply processes
+and the receiver reloads its config within a couple of seconds.
+
+Endpoints behind the dashboard (also usable directly, e.g. from Home Assistant):
+`GET /api/meta`, `GET /api/search?q=`, `GET /api/watches`,
+`POST /api/watches`, `DELETE /api/watches/{name}`.
+
 ## Operations
 
-- `GET /status` — active watches, arm/dry-run state, last webhook, recent events.
+- `GET /` — the dashboard (add/remove watches, live park search).
+- `GET /status` — active watches, arm/dry-run state, last webhook, recent events (JSON).
 - `GET /healthz` — compose healthcheck.
 - Logs are structured on stdout for both containers (`docker compose logs -f`).
 - The dedupe store is in-memory; a receiver restart may re-notify a

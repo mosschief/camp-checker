@@ -15,9 +15,12 @@ fire ONE hold request to lock an opening to your account for the ~15-minute
 hold window, and notifies you (Home Assistant webhook / Pushover / ntfy) with a
 direct booking link. Never automates payment - you complete checkout by hand.
 
-SETUP BEFORE FIRST START: put config.yaml (copy config.example.yaml from the
-project repo) and, for auto-hold watches, a holds/ folder with your captured
-hold templates into the appdata path below. Full walkthrough in the README:
+SETUP BEFORE FIRST START: put a config.yaml (copy config.example.yaml from the
+project repo) with your provider + at least one notification sink into the
+appdata path below. You can then add/remove watched campgrounds from the web
+dashboard (the WebUI button) with a live park search - no editing files, no
+container restart. For auto-hold watches, add a holds/ folder with your
+captured hold templates. Full walkthrough in the README:
 https://github.com/mosschief/camp-checker#readme
 
 The container fails fast with a clear error list if the config is invalid -
@@ -25,7 +28,7 @@ check the container log if it won't stay started. dry_run defaults to true;
 no hold is ever sent until you deliberately flip it.
   </Overview>
   <Category>Tools: Productivity:</Category>
-  <WebUI>http://[IP]:[PORT:8000]/status</WebUI>
+  <WebUI>http://[IP]:[PORT:8000]/</WebUI>
   <TemplateURL>https://raw.githubusercontent.com/mosschief/camp-checker/main/unraid/campwatch.xml</TemplateURL>
   <Icon>https://raw.githubusercontent.com/mosschief/camp-checker/main/unraid/campwatch-icon.png</Icon>
   <ExtraParams/>
