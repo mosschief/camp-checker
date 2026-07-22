@@ -411,10 +411,10 @@ def create_app(service: Optional[ReceiverService] = None) -> FastAPI:
 
     @app.get("/api/search")
     def api_search(q: str = ""):
-        # sync def → FastAPI runs it in a threadpool (camply call blocks on network)
-        rec_area_id = service.config.provider.rec_area_id
+        # sync def → FastAPI runs it in a threadpool (the fetch blocks on network)
+        base_url = service.config.provider.base_url
         try:
-            options = service.catalog.search(rec_area_id, q)
+            options = service.catalog.search(base_url, q)
         except CatalogError as exc:
             return JSONResponse({"error": str(exc)}, status_code=502)
         return {"results": [o.dict() for o in options]}

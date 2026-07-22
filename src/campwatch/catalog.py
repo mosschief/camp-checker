@@ -1,12 +1,17 @@
 """
-Campground catalog: wraps camply's GoingToCamp provider to search campgrounds
-by name for the dashboard's autocomplete. Results carry everything a watch
-needs (campground_id, resource_location_id, map_id), so the user never looks
-up a numeric id by hand.
+Campground catalog for the dashboard's autocomplete.
 
-The full campground list for a recreation area is fetched once and cached
-(with a TTL); autocomplete then filters locally, so typing is instant and we
-don't hammer GoingToCamp on every keystroke.
+Rather than route through camply's campground-listing code (which is brittle
+across GoingToCamp jurisdictions), this queries GoingToCamp's documented,
+unauthenticated endpoints directly:
+
+    GET /api/resourceLocation  -> campgrounds (id, category ids, localized name)
+    GET /api/maps              -> resourceLocationId -> mapId
+
+Results carry campground_id / resource_location_id / map_id so the UI fills
+them in and the user never looks up a numeric id by hand. The full list for a
+host is fetched once and cached (with a TTL); autocomplete filters locally so
+typing is instant and we don't hammer the provider.
 """
 
 from __future__ import annotations
@@ -14,13 +19,29 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import List, Optional
+from typing import Any, List, Optional
 
+import httpx
 from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
-CATALOG_TTL_SECONDS = 600  # re-fetch a rec area's campground list at most this often
+CATALOG_TTL_SECONDS = 600  # re-fetch a host's campground list at most this often
+FETCH_TIMEOUT = 25.0
+
+# GoingToCamp resource-category ids that denote a reservable campground
+# (from camply's provider constants).
+CAMP_SITE = -2147483648
+OVERFLOW_SITE = -2147483647
+GROUP_SITE = -2147483643
+CAMPGROUND_CATEGORIES = {CAMP_SITE, OVERFLOW_SITE, GROUP_SITE}
+
+_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/124.0 Safari/537.36",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept": "application/json",
+}
 
 
 class CampgroundOption(BaseModel):
@@ -34,57 +55,92 @@ class CatalogError(Exception):
     """Campground catalog could not be fetched from the provider."""
 
 
+def _dig(node: Any, *path: Any) -> Any:
+    for key in path:
+        if isinstance(node, list):
+            if not isinstance(key, int) or key >= len(node):
+                return None
+            node = node[key]
+        elif isinstance(node, dict):
+            node = node.get(key)
+        else:
+            return None
+    return node
+
+
 class CampgroundCatalog:
     def __init__(self, ttl_seconds: int = CATALOG_TTL_SECONDS):
         self._ttl = ttl_seconds
-        self._cache: dict[int, tuple[float, List[CampgroundOption]]] = {}
+        self._cache: dict[str, tuple[float, List[CampgroundOption]]] = {}
         self._lock = threading.Lock()
 
-    def _fetch(self, rec_area_id: int) -> List[CampgroundOption]:
-        # Imported lazily so a camply import problem can't break the whole app.
-        from camply.providers.going_to_camp.going_to_camp_provider import GoingToCamp
+    def _get_json(self, url: str) -> Any:
+        resp = httpx.get(url, headers=_HEADERS, timeout=FETCH_TIMEOUT, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.json()
 
-        provider = GoingToCamp()
+    def _map_ids(self, base_url: str) -> dict:
+        """resourceLocationId -> mapId, best-effort (never fatal)."""
         try:
-            facilities = provider.find_campgrounds(rec_area_id=[rec_area_id])
-        except SystemExit as exc:  # camply calls sys.exit on bad rec-area
-            raise CatalogError(
-                f"provider rejected rec_area_id {rec_area_id} (code {exc.code})"
-            ) from exc
+            maps = self._get_json(f"{base_url}/api/maps")
+        except Exception as exc:
+            logger.warning("could not fetch /api/maps for map ids: %s", exc)
+            return {}
+        out = {}
+        if isinstance(maps, list):
+            for m in maps:
+                rid, mid = _dig(m, "resourceLocationId"), _dig(m, "mapId")
+                if rid is not None and mid is not None:
+                    out[rid] = mid
+        return out
+
+    def _fetch(self, base_url: str) -> List[CampgroundOption]:
+        try:
+            facilities = self._get_json(f"{base_url}/api/resourceLocation")
         except Exception as exc:
             raise CatalogError(f"failed to fetch campgrounds: {exc}") from exc
+        if not isinstance(facilities, list):
+            raise CatalogError("unexpected response from /api/resourceLocation")
 
-        options = []
-        for f in facilities:
+        map_ids = self._map_ids(base_url)
+        options: List[CampgroundOption] = []
+        for facil in facilities:
+            rid = _dig(facil, "resourceLocationId")
+            name = _dig(facil, "localizedValues", 0, "fullName")
+            categories = _dig(facil, "resourceCategoryIds") or []
+            if rid is None or not name:
+                continue
+            # keep only reservable campgrounds (skip day-use / non-camp facilities)
+            if categories and not (set(categories) & CAMPGROUND_CATEGORIES):
+                continue
             try:
-                options.append(
-                    CampgroundOption(
-                        campground_id=int(f.facility_id),
-                        resource_location_id=int(f.facility_id),
-                        map_id=f.map_id,
-                        name=f.facility_name,
-                    )
-                )
+                rid_int = int(rid)
             except (TypeError, ValueError):
                 continue
+            options.append(
+                CampgroundOption(
+                    campground_id=rid_int,
+                    resource_location_id=rid_int,
+                    map_id=map_ids.get(rid),
+                    name=str(name),
+                )
+            )
         options.sort(key=lambda o: o.name.lower())
         return options
 
-    def all(self, rec_area_id: int, force: bool = False) -> List[CampgroundOption]:
+    def all(self, base_url: str, force: bool = False) -> List[CampgroundOption]:
         now = time.monotonic()
         with self._lock:
-            cached = self._cache.get(rec_area_id)
+            cached = self._cache.get(base_url)
             if cached and not force and now - cached[0] < self._ttl:
                 return cached[1]
-        # fetch outside the lock (network call)
-        options = self._fetch(rec_area_id)
+        options = self._fetch(base_url)  # network call outside the lock
         with self._lock:
-            self._cache[rec_area_id] = (time.monotonic(), options)
+            self._cache[base_url] = (time.monotonic(), options)
         return options
 
-    def search(self, rec_area_id: int, query: str, limit: int = 25) -> List[CampgroundOption]:
-        options = self.all(rec_area_id)
+    def search(self, base_url: str, query: str, limit: int = 25) -> List[CampgroundOption]:
+        options = self.all(base_url)
         q = (query or "").strip().lower()
         matches = options if not q else [o for o in options if q in o.name.lower()]
-        # sort here so ordering is guaranteed for the UI regardless of source order
         return sorted(matches, key=lambda o: o.name.lower())[:limit]

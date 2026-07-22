@@ -18,7 +18,7 @@ def client(app_config, config_dir, monkeypatch):
         monkeypatch.setenv(k, v)
     service = ReceiverService(app_config, config_dir, notifier=FakeNotifier(), sessions=FakeSessions())
     # stub the catalog so no network is touched
-    service.catalog.search = lambda rec, q, limit=25: [
+    service.catalog.search = lambda base, q, limit=25: [
         CampgroundOption(campground_id=111, resource_location_id=111, map_id=222,
                          name="Kanaskat-Palmer State Park"),
     ] if "kan" in q.lower() else []
